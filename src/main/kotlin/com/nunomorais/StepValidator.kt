@@ -1,13 +1,10 @@
 package com.nunomorais
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import com.fasterxml.jackson.annotation.JsonValue
-import sun.reflect.generics.reflectiveObjects.NotImplementedException
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KType
-import kotlin.reflect.full.createInstance
 import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.isSubclassOf
 import kotlin.reflect.full.memberProperties
@@ -41,7 +38,6 @@ class StepValidatorProcessor {
 
     fun validate(path: String, target: Any, type: KClass<*>): Map<String, Any> =
         when {
-            type.hasJsonTypeInfo() -> throw NotImplementedException()
             target is Map<*, *> -> type.declaredMemberProperties.asSequence()
                 .fold(mapOf()) { acc, it ->
                     val name = it.name.toSnakeCase()
@@ -61,10 +57,21 @@ class StepValidatorProcessor {
             }
         }
 
+    private fun getClass(target: Map<*, *>, from: String) = try {
+        val classPackageName = target[from]
+        Class.forName(classPackageName as String).kotlin
+    } catch (e: Exception) {
+        null
+    }
+
     private fun validate(path: String, target: Any, type: KType): Map<String, Any> =
-        when (target) {
-            is Map<*, *> -> validate(path, target, type.jvmErasure)
-            is List<*> -> target.foldIndexed(mapOf()) { index, acc, element ->
+        when {
+            target is Map<*, *> && type.jvmErasure.hasJsonTypeInfo() ->
+                getClass(target, type.jvmErasure.getJsonTypeInfo()!!)?.let {
+                    validate(path, target, it)
+                } ?: mapOf(path to listOf("NOT_FOUND_TYPE"))
+            target is Map<*, *> -> validate(path, target, type.jvmErasure)
+            target is List<*> -> target.foldIndexed(mapOf()) { index, acc, element ->
                 acc + validate("${path}[${index}]", element!!, type.arguments[0].type!!)
             }
             else -> matchingType.validate(target, type).let {

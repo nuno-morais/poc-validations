@@ -1,6 +1,9 @@
 package com.nunomorais
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonTypeInfo
+import com.fasterxml.jackson.annotation.JsonValue
+import sun.reflect.generics.reflectiveObjects.NotImplementedException
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KType
@@ -37,41 +40,48 @@ class StepValidatorProcessor {
     private val matchingType = MatchingType()
 
     fun validate(path: String, target: Any, type: KClass<*>): Map<String, Any> =
-        if (target is Map<*, *>) {
-            type.declaredMemberProperties.asSequence()
+        when {
+            type.hasJsonTypeInfo() -> throw NotImplementedException()
+            target is Map<*, *> -> type.declaredMemberProperties.asSequence()
                 .fold(mapOf()) { acc, it ->
                     val name = it.name.toSnakeCase()
                     acc + validate("${path}/${name}", target[name], it)
                 }
-        } else {
-            throw Exception()
+            else -> throw Exception()
         }
 
     private fun validate(path: String, target: Any?, type: KProperty<*>): Map<String, Any> =
-        if (target == null) {
-            if (!type.returnType.isMarkedNullable) {
-                mapOf(path to listOf("REQUIRED"))
-            } else {
-                emptyMap()
-            }
-        } else {
-            if (target is Map<*, *>) {
-                validate(path, target, type.returnType.jvmErasure).let {
-                    if (it.isEmpty()) {
-                        applyFieldValidations(type, target, path)
-                        // If empty, applyClassValidations...
-                    } else it
-                }
-            } else {
-                matchingType.validate(target, type.returnType).let {
-                    if (!it.isValid) {
-                        mapOf(path to listOf(it.error))
-                    } else {
-                        applyFieldValidations(type, target, path)
-                    }
-                }
+        when (target) {
+            null -> validateNull(type, path)
+            else -> validate(path, target, type.returnType).let {
+                if (it.isEmpty()) {
+                    applyFieldValidations(type, target, path)
+                    // If empty, applyClassValidations...
+                } else it
             }
         }
+
+    private fun validate(path: String, target: Any, type: KType): Map<String, Any> =
+        when (target) {
+            is Map<*, *> -> validate(path, target, type.jvmErasure)
+            is List<*> -> target.foldIndexed(mapOf()) { index, acc, element ->
+                acc + validate("${path}[${index}]", element!!, type.arguments[0].type!!)
+            }
+            else -> matchingType.validate(target, type).let {
+                if (!it.isValid) {
+                    mapOf(path to listOf(it.error))
+                } else mapOf()
+            }
+        }
+
+    private fun validateNull(
+        type: KProperty<*>,
+        path: String
+    ) = if (!type.returnType.isMarkedNullable) {
+        mapOf(path to listOf("REQUIRED"))
+    } else {
+        emptyMap()
+    }
 
     private fun applyFieldValidations(
         type: KProperty<*>,
@@ -108,10 +118,64 @@ data class Foo(
     @field:MinLengthFieldValidation(type = MinLengthValidator::class, min = 5)
     val age: Int?,
     val bar: Bar,
-    val bool: Boolean
+    val bool: Boolean,
+    val message: Message
 )
 
+@JsonTypeInfo(
+    use = JsonTypeInfo.Id.CLASS,
+    property = "@td-type"
+)
+sealed class Message
 
+enum class Language(
+    @field:JsonValue
+    val code: String
+) {
+    EN_US("en-US"),
+    EN_UK("en-UK"),
+    PT_PT("pt-PT")
+}
+
+class TextMessage(
+    val text: String,
+    val language: Language
+) : Message()
+
+class UrlMessage(
+    val url: String
+) : Message()
+
+enum class TalkdeskResources(
+    @field:JsonValue
+    val code: String
+) {
+    Asset("asset")
+}
+
+class AssetReference(
+    val id: String,
+    val type: TalkdeskResources
+)
+
+class AudioMessage(
+    val reference: AssetReference
+) : Message()
+
+/*
+data class Language(
+    val code: String
+)
+
+data class Message(
+    val text: String,
+    val languages: List<Language>
+)
+
+data class PlayAudio(
+    val message: Message
+)
+*/
 class MinLengthValidator : Validator {
     override fun validate(target: Any, type: KType, vararg args: Any) =
         if (target is Number && args.first() is Number) {
@@ -123,7 +187,24 @@ class MinLengthValidator : Validator {
         }
 }
 
+
 fun main() {
+    /*val play_audio = mapOf(
+        "message" to mapOf(
+            "text" to "Message",
+            "languages" to listOf(
+                mapOf("code" to "ui"),
+                mapOf("code" to 2),
+                mapOf("code" to 3),
+                mapOf("code" to "ui")
+            )
+        ),
+        "prop" to "Hello"
+    )
+
+    var validatorService = StepValidatorProcessor()
+    println(validatorService.validate("", play_audio, PlayAudio::class))
+*/
     val m = mapOf(
         "age" to 6,
         "bar" to mapOf(
@@ -132,7 +213,11 @@ fun main() {
                 "list" to listOf(1, 2, 3)
             )
         ),
-        "bool" to false
+        "bool" to false,
+        "message" to mapOf(
+            "@td-type" to "com.nunomorais.UrlMessage",
+            "url" to "http://dummyurl.com/music.mp3"
+        )
     )
     println(StepValidatorProcessor().validate("", m, Foo::class))
 }

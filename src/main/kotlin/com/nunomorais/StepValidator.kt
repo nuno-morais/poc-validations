@@ -1,9 +1,7 @@
 package com.nunomorais
 
-import com.fasterxml.jackson.annotation.JsonTypeInfo
-import com.fasterxml.jackson.annotation.JsonValue
-import examples.PlayAudio
-import sun.reflect.generics.reflectiveObjects.NotImplementedException
+import com.nunomorais.examples.Foo
+import com.nunomorais.examples.PlayAudio
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KType
@@ -35,36 +33,8 @@ class MatchingType : Validator {
         } else ResultValidator()
 }
 
-class ValidateEnum : Validator {
-    override fun validate(target: Any, type: KType, vararg args: Any): ResultValidator{
-        val constants = type.jvmErasure.java.enumConstants
-        val properties = constants[0]::class.declaredMemberProperties
-
-        properties.forEach { property ->
-            var name = property.name
-            if (target is Map<*,*> && target[name] == null){
-                return ResultValidator(false, "MISSING_PROPERTY")
-            }
-        }
-
-        val enumValues = constants.map { constant ->
-            properties.fold(mapOf<String, Any?>()){ acc, elem ->
-                acc + mapOf(elem.name to elem.getter.call(constant))
-            }
-        }
-
-        val isValid = enumValues.find { it == target } != null
-        if(!isValid){
-            return ResultValidator(false, "ENUM_DOES_NOT_EXIST")
-        }
-
-        return ResultValidator(true)
-    }
-}
-
 class StepValidatorProcessor {
     private val matchingType = MatchingType()
-    private val validateEnum = ValidateEnum()
 
     fun validate(path: String, target: Any, type: KClass<*>): Map<String, Any> =
         when {
@@ -100,11 +70,7 @@ class StepValidatorProcessor {
                 getClass(target, type.jvmErasure.getJsonTypeInfo()!!)?.let {
                     validate(path, target, it)
                 } ?: mapOf(path to listOf("NOT_FOUND_TYPE"))
-            type.jvmErasure.isSubclassOf(Enum::class) -> validateEnum.validate(target, type).let {
-                if  (!it.isValid) {
-                    mapOf(path to listOf(it.error))
-                } else mapOf()
-            }
+            type.jvmErasure.isSubclassOf(Enum::class) -> validateEnums(path, target, type)
             target is Map<*, *> -> validate(path, target, type.jvmErasure)
             target is List<*> -> target.foldIndexed(mapOf()) { index, acc, element ->
                 acc + validate("${path}[${index}]", element!!, type.arguments[0].type!!)
@@ -116,7 +82,7 @@ class StepValidatorProcessor {
             }
         }
 
-    private fun validateEnums(path: String, type: KType, target:Any): Map<String, Any>{
+    private fun validateEnums(path: String, target:Any, type: KType): Map<String, Any>{
         val constants = type.jvmErasure.java.enumConstants
         val properties = constants[0]::class.declaredMemberProperties
 
@@ -192,16 +158,31 @@ class MinLengthValidator : Validator {
 
 
 fun main() {
-    val play_audio = mapOf(
+    val url_message = mapOf(
         "message" to mapOf(
-            "language" to mapOf("code" to "en-US", "cenas" to "rr")
+            "@td-type" to "com.nunomorais.examples.UrlMessage",
+            "url" to "http://dummyurl.com/music.mp3"
         )
     )
 
     var validatorService = StepValidatorProcessor()
-    println(validatorService.validate("", play_audio, PlayAudio::class))
+    println("Invalid URL_Message: $url_message")
+    println("Validation report for URL_Message: ${validatorService.validate("", url_message, PlayAudio::class)}")
 
-  /*  val m = mapOf(
+    val text_message = mapOf(
+        "message" to mapOf(
+            "@td-type" to "com.nunomorais.examples.TextMessage",
+            "language" to mapOf(
+                "code" to "en-US"
+            ),
+            "message" to 2
+        )
+    )
+
+    println("Invalid TEXT_Message: $text_message")
+    println("Validation report for TEXT_Message: ${validatorService.validate("", text_message, PlayAudio::class)}")
+
+    val foo = mapOf(
         "age" to 6,
         "bar" to mapOf(
             "name" to "hello1",
@@ -210,10 +191,19 @@ fun main() {
             )
         ),
         "bool" to false,
-        "message" to mapOf(
-            "@td-type" to "com.nunomorais.UrlMessage",
-            "url" to "http://dummyurl.com/music.mp3"
+        "messages" to listOf(
+            mapOf(
+                "@td-type" to "com.nunomorais.examples.UrlMessage",
+                "url" to "http://dummyurl.com/music.mp3"
+            ), mapOf(
+                "@td-type" to "com.nunomorais.examples.TextMessage",
+                "language" to mapOf(
+                    "code" to "en-US"
+                ),
+                "text" to "string message"
+            )
         )
     )
-    println(StepValidatorProcessor().validate("", m, Foo::class))*/
+    println("Invalid Foo component: $foo")
+    println("Multiple validation report: ${StepValidatorProcessor().validate("", foo, Foo::class)}")
 }

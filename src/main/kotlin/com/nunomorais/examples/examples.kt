@@ -1,11 +1,9 @@
-package examples
+package com.nunomorais.examples
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import com.fasterxml.jackson.annotation.JsonValue
 import com.nunomorais.MinLengthFieldValidation
 import com.nunomorais.MinLengthValidator
-import java.sql.Timestamp
-
 
 data class FooBar(
     val list: List<Int>
@@ -21,14 +19,27 @@ data class Foo(
     val age: Int?,
     val bar: Bar,
     val bool: Boolean,
-    val message: Message
+    val messages: List<Message>
 )
 
-/*@JsonTypeInfo(
+@JsonTypeInfo(
     use = JsonTypeInfo.Id.CLASS,
     property = "@td-type"
 )
-sealed class Message*/
+sealed class Message
+
+class TextMessage(
+    val text: String,
+    val language: Language
+) : Message()
+
+class UrlMessage(
+    val url: String
+) : Message()
+
+data class PlayAudio(
+    val message: Message
+)
 
 enum class Language(
     @field:JsonValue
@@ -38,16 +49,6 @@ enum class Language(
     EN_UK("en-UK"),
     PT_PT("pt-PT")
 }
-/*
-class TextMessage(
-    val text: String,
-    val language: Language
-) : Message()
-
-class UrlMessage(
-    val url: String
-) : Message()
-*/
 
 enum class TalkdeskResources(
     @field:JsonValue
@@ -59,16 +60,5 @@ enum class TalkdeskResources(
 class AssetReference(
     val id: String,
     val type: TalkdeskResources
-)
-
-data class Message(
-    //val text: String,
-    val date: Timestamp,
-    val finalDate: Timestamp,
-    val language: Language
-)
-
-data class PlayAudio(
-    val message: Message
 )
 

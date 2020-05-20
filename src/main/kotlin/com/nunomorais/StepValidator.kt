@@ -2,6 +2,8 @@ package com.nunomorais
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 import com.fasterxml.jackson.annotation.JsonValue
+import examples.PlayAudio
+import sun.reflect.generics.reflectiveObjects.NotImplementedException
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty
 import kotlin.reflect.KType
@@ -33,8 +35,36 @@ class MatchingType : Validator {
         } else ResultValidator()
 }
 
+class ValidateEnum : Validator {
+    override fun validate(target: Any, type: KType, vararg args: Any): ResultValidator{
+        val constants = type.jvmErasure.java.enumConstants
+        val properties = constants[0]::class.declaredMemberProperties
+
+        properties.forEach { property ->
+            var name = property.name
+            if (target is Map<*,*> && target[name] == null){
+                return ResultValidator(false, "MISSING_PROPERTY")
+            }
+        }
+
+        val enumValues = constants.map { constant ->
+            properties.fold(mapOf<String, Any?>()){ acc, elem ->
+                acc + mapOf(elem.name to elem.getter.call(constant))
+            }
+        }
+
+        val isValid = enumValues.find { it == target } != null
+        if(!isValid){
+            return ResultValidator(false, "ENUM_DOES_NOT_EXIST")
+        }
+
+        return ResultValidator(true)
+    }
+}
+
 class StepValidatorProcessor {
     private val matchingType = MatchingType()
+    private val validateEnum = ValidateEnum()
 
     fun validate(path: String, target: Any, type: KClass<*>): Map<String, Any> =
         when {
@@ -70,6 +100,11 @@ class StepValidatorProcessor {
                 getClass(target, type.jvmErasure.getJsonTypeInfo()!!)?.let {
                     validate(path, target, it)
                 } ?: mapOf(path to listOf("NOT_FOUND_TYPE"))
+            type.jvmErasure.isSubclassOf(Enum::class) -> validateEnum.validate(target, type).let {
+                if  (!it.isValid) {
+                    mapOf(path to listOf(it.error))
+                } else mapOf()
+            }
             target is Map<*, *> -> validate(path, target, type.jvmErasure)
             target is List<*> -> target.foldIndexed(mapOf()) { index, acc, element ->
                 acc + validate("${path}[${index}]", element!!, type.arguments[0].type!!)
@@ -80,6 +115,38 @@ class StepValidatorProcessor {
                 } else mapOf()
             }
         }
+
+    private fun validateEnums(path: String, type: KType, target:Any): Map<String, Any>{
+        val constants = type.jvmErasure.java.enumConstants
+        val properties = constants[0]::class.declaredMemberProperties
+
+        val errors = properties.fold(mapOf<String,Any>()) { acc, property ->
+            var name = property.name
+            if(target is Map<*,*>){
+                acc + validate("$path/$name", target[name], property)
+            }
+            else {
+                acc + mapOf("$path/$name" to listOf("wrong_type"))
+            }
+        }
+
+        if(errors.isNotEmpty()){
+            return errors
+        }
+
+        val enumValues = constants.map { constant ->
+            properties.fold(mapOf<String, Any?>()){ acc, elem ->
+                acc + mapOf(elem.name to elem.getter.call(constant))
+            }
+        }
+
+        val isValid = enumValues.find { it == target } != null
+        if(!isValid){
+            return mapOf("$path" to listOf("ENUM_NOT_FOUND"))
+        }
+
+       return emptyMap()
+    }
 
     private fun validateNull(
         type: KProperty<*>,
@@ -112,77 +179,6 @@ class StepValidatorProcessor {
         }
 }
 
-data class FooBar(
-    val list: List<Int>
-)
-
-data class Bar(
-    val name: String,
-    val foo: FooBar
-)
-
-data class Foo(
-    @field:MinLengthFieldValidation(type = MinLengthValidator::class, min = 5)
-    val age: Int?,
-    val bar: Bar,
-    val bool: Boolean,
-    val message: Message
-)
-
-@JsonTypeInfo(
-    use = JsonTypeInfo.Id.CLASS,
-    property = "@td-type"
-)
-sealed class Message
-
-enum class Language(
-    @field:JsonValue
-    val code: String
-) {
-    EN_US("en-US"),
-    EN_UK("en-UK"),
-    PT_PT("pt-PT")
-}
-
-class TextMessage(
-    val text: String,
-    val language: Language
-) : Message()
-
-class UrlMessage(
-    val url: String
-) : Message()
-
-enum class TalkdeskResources(
-    @field:JsonValue
-    val code: String
-) {
-    Asset("asset")
-}
-
-class AssetReference(
-    val id: String,
-    val type: TalkdeskResources
-)
-
-class AudioMessage(
-    val reference: AssetReference
-) : Message()
-
-/*
-data class Language(
-    val code: String
-)
-
-data class Message(
-    val text: String,
-    val languages: List<Language>
-)
-
-data class PlayAudio(
-    val message: Message
-)
-*/
 class MinLengthValidator : Validator {
     override fun validate(target: Any, type: KType, vararg args: Any) =
         if (target is Number && args.first() is Number) {
@@ -196,23 +192,16 @@ class MinLengthValidator : Validator {
 
 
 fun main() {
-    /*val play_audio = mapOf(
+    val play_audio = mapOf(
         "message" to mapOf(
-            "text" to "Message",
-            "languages" to listOf(
-                mapOf("code" to "ui"),
-                mapOf("code" to 2),
-                mapOf("code" to 3),
-                mapOf("code" to "ui")
-            )
-        ),
-        "prop" to "Hello"
+            "language" to mapOf("code" to "en-US", "cenas" to "rr")
+        )
     )
 
     var validatorService = StepValidatorProcessor()
     println(validatorService.validate("", play_audio, PlayAudio::class))
-*/
-    val m = mapOf(
+
+  /*  val m = mapOf(
         "age" to 6,
         "bar" to mapOf(
             "name" to "hello1",
@@ -226,5 +215,5 @@ fun main() {
             "url" to "http://dummyurl.com/music.mp3"
         )
     )
-    println(StepValidatorProcessor().validate("", m, Foo::class))
+    println(StepValidatorProcessor().validate("", m, Foo::class))*/
 }
